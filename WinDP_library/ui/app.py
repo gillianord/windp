@@ -1786,6 +1786,28 @@ class WindDataProcessingApp:
             position, additive=self._mouse_event_has_control(mouse_event)
         )
 
+    @staticmethod
+    def _style_selection_points(artist, count: int, focus_index: int | None) -> None:
+        """Emphasize the last-selected point when multiple points are selected."""
+        if count <= 0:
+            return
+        base_size = 10.0
+        focus_size = 28.0
+        base_edge = "darkmagenta"
+        focus_edge = "gold"
+        base_lw = 1.0
+        focus_lw = 1.8
+        sizes = np.full(count, base_size, dtype=float)
+        linewidths = np.full(count, base_lw, dtype=float)
+        edges = [base_edge] * count
+        if focus_index is not None and count > 1 and 0 <= focus_index < count:
+            sizes[focus_index] = focus_size
+            linewidths[focus_index] = focus_lw
+            edges[focus_index] = focus_edge
+        artist.set_sizes(sizes)
+        artist.set_linewidths(linewidths)
+        artist.set_edgecolors(edges)
+
     def _update_selection_artists(self) -> None:
         empty = np.empty((0, 2))
         timeseries_selection = self.plot_artists.get("timeseries_selection")
@@ -1805,16 +1827,41 @@ class WindDataProcessingApp:
             polar_selection.set_offsets(empty)
             return
 
+        focus_id = self._selection_focus_id
+        focus_index: int | None = None
+        if focus_id is not None:
+            focus_matches = np.flatnonzero(row_ids[positions] == focus_id)
+            if focus_matches.size:
+                focus_index = int(focus_matches[0])
+                # Draw the focus point last so it sits on top of the selection.
+                if positions.size > 1:
+                    order = [
+                        i for i in range(positions.size) if i != focus_index
+                    ] + [focus_index]
+                    positions = positions[order]
+                    focus_index = positions.size - 1
+
         time_offsets = self.plot_artists["timeseries_points"].get_offsets()[positions]
         timeseries_selection.set_offsets(time_offsets)
+        self._style_selection_points(
+            timeseries_selection, positions.size, focus_index
+        )
 
         polar_offsets = np.asarray(self.plot_artists["polar_offsets"], dtype=float)
         if self.visible_mask is not None:
-            visible_positions = positions[self.visible_mask[positions]]
+            visible_mask = self.visible_mask[positions]
+            visible_positions = positions[visible_mask]
+            polar_focus_index: int | None = None
+            if focus_index is not None and visible_mask[focus_index]:
+                polar_focus_index = int(np.count_nonzero(visible_mask[:focus_index]))
         else:
             visible_positions = positions
+            polar_focus_index = focus_index
         if visible_positions.size:
             polar_selection.set_offsets(polar_offsets[visible_positions])
+            self._style_selection_points(
+                polar_selection, visible_positions.size, polar_focus_index
+            )
         else:
             polar_selection.set_offsets(empty)
 
@@ -1932,9 +1979,6 @@ class WindDataProcessingApp:
             time_text = timestamp.strftime("%Y-%m-%d %H:%M:%S")
         else:
             time_text = str(timestamp)
-        selected_count = len(self.selected_row_ids)
-        if selected_count > 1:
-            time_text = f"{time_text}  (+{selected_count - 1} more)"
         self.time_value.set(time_text)
         self.speed_value.set(f"{speed:.3f}")
         self.direction_value.set(f"{direction % 360:.2f}")
